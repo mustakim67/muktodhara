@@ -1,8 +1,7 @@
 import { connectDB } from "@/lib/db";
 import Node from "@/models/Node";
 import { sendEmail } from "@/lib/mailer";
-// Use a relative path to avoid alias resolution issues on Vercel
-import Sensor from "../../models/Sensor"; 
+import Sensor from "@/models/Sensor";
 
 export const dynamic = 'force-dynamic';
 
