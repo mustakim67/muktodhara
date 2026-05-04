@@ -1,22 +1,29 @@
 import { connectDB } from "@/lib/db";
-import Sensor from "@/models/Sensor";
 import Node from "@/models/Node";
 import { sendEmail } from "@/lib/mailer";
+// Use a relative path to avoid alias resolution issues on Vercel
+import Sensor from "../../models/Sensor"; 
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(req) {
   try {
     await connectDB();
+    
+    // Safety check: Ensure the model is attached to the connection
+    if (!Sensor) {
+       throw new Error("Sensor model could not be initialized");
+    }
+
     const body = await req.json();
     const { node_id, s1, s2 } = body;
 
     const config = await Node.findOne({ node_id });
     if (!config) return Response.json({ error: "Node config not found" }, { status: 404 });
 
-    // Hardware Calibration & Accurate Depth Calculation
+    // 1. Hardware Calibration & Depth Calculation
     const s1_cal = s1;
-    const s2_cal = s2 - 1; // Correcting hardware offset
+    const s2_cal = s2 - 1; 
     
     const depth1 = Math.max(0, config.baseline_depth - s1_cal);
     const depth2 = Math.max(0, config.baseline_depth - s2_cal);
@@ -24,19 +31,14 @@ export async function POST(req) {
     const current_depth = Math.max(depth1, depth2);
     const capacity_reached = (current_depth / config.baseline_depth) * 100;
 
-    // Status Logic: Green < 45%, Yellow 45-60%, Red > 60%
+    // 2. Status Logic: Green < 45%, Yellow 45-60%, Red > 60%
     let status = "GREEN";
-    if (capacity_reached > 60) {
-      status = "RED";
-    } else if (capacity_reached >= 45) {
-      status = "YELLOW";
-    } else {
-      status = "GREEN";
-    }
+    if (capacity_reached > 60) status = "RED";
+    else if (capacity_reached >= 45) status = "YELLOW";
 
+    // 3. Prediction & Email Alert Logic
     const lastLog = await Sensor.findOne({ node_id }).sort({ createdAt: -1 });
 
-    // Redundancy Logic
     const sensorsMatchHigh = (capacity_reached >= 45 && Math.abs(depth1 - depth2) < 5);
     const shouldNotify = (status !== "GREEN" && (!lastLog || lastLog.status !== status)) || (sensorsMatchHigh && !lastLog?.sensorsMatchHigh);
 
@@ -59,13 +61,12 @@ export async function POST(req) {
         -------------------------------------------
         ${resourceSuggestion}
         -------------------------------------------
-        
-        *Hardware Note: s2 was auto-calibrated by -1cm.*
       `;
 
       await sendEmail('mahfujapple95@gmail.com', subject, message);
     }
 
+    // 4. Save Record
     const log = await Sensor.create({
       node_id,
       location: config.location,
