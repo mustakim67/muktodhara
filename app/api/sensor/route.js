@@ -3,6 +3,8 @@ import Sensor from "@/models/Sensor";
 import Node from "@/models/Node";
 import { sendEmail } from "@/lib/mailer";
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(req) {
   try {
     await connectDB();
@@ -12,39 +14,34 @@ export async function POST(req) {
     const config = await Node.findOne({ node_id });
     if (!config) return Response.json({ error: "Node config not found" }, { status: 404 });
 
-    // 1. Hardware Calibration & Accurate Depth Calculation
+    // Hardware Calibration & Accurate Depth Calculation
     const s1_cal = s1;
-    const s2_cal = s2 - 1; // Correcting the 1cm hardware offset
+    const s2_cal = s2 - 1; // Correcting hardware offset
     
-    // Depth is calculated as the baseline (total drain height) minus current sensor reading
     const depth1 = Math.max(0, config.baseline_depth - s1_cal);
     const depth2 = Math.max(0, config.baseline_depth - s2_cal);
     
-    // Use the highest detected water level for safety
     const current_depth = Math.max(depth1, depth2);
     const capacity_reached = (current_depth / config.baseline_depth) * 100;
 
-    // 2. Updated Status Logic per your request
+    // Status Logic: Green < 45%, Yellow 45-60%, Red > 60%
     let status = "GREEN";
     if (capacity_reached > 60) {
-      status = "RED"; // Red for more than 60%
+      status = "RED";
     } else if (capacity_reached >= 45) {
-      status = "YELLOW"; // Yellow for 45% to 60%
+      status = "YELLOW";
     } else {
-      status = "GREEN"; // Green for less than 45%
+      status = "GREEN";
     }
 
-    // 3. Email Alert Logic
     const lastLog = await Sensor.findOne({ node_id }).sort({ createdAt: -1 });
 
-    // Trigger alert if status escalates or if both sensors confirm high levels (redundancy)
+    // Redundancy Logic
     const sensorsMatchHigh = (capacity_reached >= 45 && Math.abs(depth1 - depth2) < 5);
     const shouldNotify = (status !== "GREEN" && (!lastLog || lastLog.status !== status)) || (sensorsMatchHigh && !lastLog?.sensorsMatchHigh);
 
     if (shouldNotify) {
       let resourceSuggestion = "Status is stable.";
-      
-      // 4. Resource Suggestion Logic
       if (status === "YELLOW") {
         resourceSuggestion = "Suggest deploying 1-2 Plumbers to check for localized blockages.";
       } else if (status === "RED") {
@@ -66,10 +63,9 @@ export async function POST(req) {
         *Hardware Note: s2 was auto-calibrated by -1cm.*
       `;
 
-      await sendEmail('mahfujapple95@gmail.com', subject, message); //
+      await sendEmail('mahfujapple95@gmail.com', subject, message);
     }
 
-    // 5. Save Record
     const log = await Sensor.create({
       node_id,
       location: config.location,
@@ -88,7 +84,6 @@ export async function POST(req) {
   }
 }
 
-// 6. Dashboard Fix: Dynamic Fetching without caching
 export async function GET() {
   try {
     await connectDB();
